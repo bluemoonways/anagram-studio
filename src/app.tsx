@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search,
   Sparkles,
   Shuffle,
-  Volume2,
   Copy,
   Check,
   Trophy,
@@ -11,35 +10,49 @@ import {
   Lightbulb,
   ArrowRight,
   RefreshCw,
-  Sliders,
   Layers,
   HelpCircle,
-  Hash,
   Download,
   Flame,
   Award,
   BookOpen
 } from 'lucide-react';
-import { Flow } from 'flow-sdk';
-import { findLocalAnagrams, calculateWordScore, shuffleWord, sortWordLetters, LETTER_SCORES } from './anagramUtils';
+import { findLocalAnagrams, shuffleWord, sortWordLetters, LETTER_SCORES } from './anagramUtils';
 import { FAMOUS_ANAGRAMS, COMMON_DICTIONARY } from './dictionary';
 import { AnagramResult, ToolMode } from './types';
+
+function getRemainingSortedLetters(sourceCounts: Record<string, number>, word: string): string | null {
+  const rem: Record<string, number> = { ...sourceCounts };
+  for (const ch of word) {
+    if (!rem[ch] || rem[ch] <= 0) return null;
+    rem[ch]--;
+  }
+  let leftover = '';
+  for (const ch of Object.keys(rem).sort()) {
+    leftover += ch.repeat(rem[ch]);
+  }
+  return leftover;
+}
+
 export default function App() {
   // Navigation / Modes
   const [activeMode, setActiveMode] = useState<ToolMode>('solver');
   const [showInfoModal, setShowInfoModal] = useState<boolean>(false);
+
   // Solver State
   const [solverInput, setSolverInput] = useState<string>('cinema');
   const [solverSearchType, setSolverSearchType] = useState<'exact' | 'subwords'>('subwords');
   const [minLength, setMinLength] = useState<number>(3);
   const [copiedWord, setCopiedWord] = useState<string | null>(null);
-  // AI Creative Anagrams Generator State
+
+  // Creative Anagrams Generator State
   const [creativeInput, setCreativeInput] = useState<string>('dormitory');
   const [creativeTheme, setCreativeTheme] = useState<string>('witty and ironic');
   const [isAiGenerating, setIsAiGenerating] = useState<boolean>(false);
   const [aiAnagrams, setAiAnagrams] = useState<Array<{ phrase: string; explanation: string }>>([
-    { phrase: "dirty room", explanation: "Classic dorm room condition using all 9 letters" }
+    { phrase: 'dirty room', explanation: 'Classic dorm room condition using all 9 letters' }
   ]);
+
   // Challenge / Quiz Game State
   const [gameScore, setGameScore] = useState<number>(0);
   const [gameStreak, setGameStreak] = useState<number>(0);
@@ -49,15 +62,18 @@ export default function App() {
   const [gameStatus, setGameStatus] = useState<'idle' | 'correct' | 'wrong' | 'revealed'>('idle');
   const [gameHint, setGameHint] = useState<string>('');
   const [isGeneratingHint, setIsGeneratingHint] = useState<boolean>(false);
+
   // Visualizer / Tile Scrambler State
   const [scramblePhrase, setScramblePhrase] = useState<string>('ASTRO NOMER');
   const [tileLetters, setTileLetters] = useState<Array<{ id: number; char: string; origPos: number }>>([]);
   const [draggedTileIdx, setDraggedTileIdx] = useState<number | null>(null);
+
   // Initialize Tile Visualizer
   useEffect(() => {
     const chars = scramblePhrase.toUpperCase().split('');
     setTileLetters(chars.map((char, idx) => ({ id: idx, char, origPos: idx })));
   }, [scramblePhrase]);
+
   // Setup initial challenge word
   const initNewChallenge = (target?: string) => {
     let word = target;
@@ -72,14 +88,17 @@ export default function App() {
     setGameStatus('idle');
     setGameHint('');
   };
+
   useEffect(() => {
     initNewChallenge('planet');
   }, []);
+
   // Compute local anagram results
   const solverResults = useMemo(() => {
     const list = findLocalAnagrams(solverInput, solverSearchType);
     return list.filter(item => item.length >= minLength);
   }, [solverInput, solverSearchType, minLength]);
+
   // Group anagrams by length for clear layout
   const groupedResults = useMemo(() => {
     const map = new Map<number, AnagramResult[]>();
@@ -90,66 +109,118 @@ export default function App() {
     }
     return Array.from(map.entries()).sort((a, b) => b[0] - a[0]);
   }, [solverResults]);
+
   // Copy word helper
   const handleCopy = (word: string) => {
     navigator.clipboard.writeText(word);
     setCopiedWord(word);
     setTimeout(() => setCopiedWord(null), 1800);
   };
-  // AI Creative Anagram Generator using Flow.generate.text
-  const generateAiAnagrams = async () => {
-    if (!creativeInput.trim()) return;
+
+  // Offline Phrase & Multi-Word Anagram Generator
+  const generateAiAnagrams = () => {
+    const clean = creativeInput.toLowerCase().replace(/[^a-z]/g, '');
+    if (!clean) return;
+
     setIsAiGenerating(true);
-    try {
-      const prompt = `You are a world-class anagramist and master of wordplay.
-Generate 5 clever, humorous, meaningful, or poetic full-phrase anagrams of: "${creativeInput}".
-The letters must precisely match or rearrange into brilliant English phrases.
-Style/Theme: ${creativeTheme}.
-Format each result strictly on its own line like this:
-[PHRASE] || [EXPLANATION]
-Example:
-dirty room || Perfect description of a college dormitory.
-silent || Attentive listening requires silence.
-Do not write Markdown headers or numbered lists, just output the 5 lines.`;
-      const response = await Flow.generate.text(prompt, {
-        systemInstruction: "You are an expert anagram solver and literary word smith. You produce exact letter-for-letter anagram phrases that match the original letters.",
-        thinkingLevel: "medium"
-      });
-      const lines = response.text.trim().split('\n').filter(line => line.includes('||'));
-      const parsed = lines.map(line => {
-        const [phrase, explanation] = line.split('||');
-        return {
-          phrase: phrase.replace(/^[^a-zA-Z0-9]+/, '').trim(),
-          explanation: (explanation || '').trim()
-        };
-      });
-      if (parsed.length > 0) {
-        setAiAnagrams(parsed);
-      } else {
-        // Fallback split if standard delimiter missed
-        const genericLines = response.text.trim().split('\n').filter(Boolean).slice(0, 5);
-        setAiAnagrams(genericLines.map(l => ({ phrase: l.replace(/^[0-9\.\-\* ]+/, '').trim(), explanation: 'Creative anagram rearrangement' })));
+    setTimeout(() => {
+      const results: Array<{ phrase: string; explanation: string }> = [];
+      const seen = new Set<string>([clean]);
+      const sortedTarget = sortWordLetters(clean);
+
+      // 1. Check famous historical anagrams first
+      for (const item of FAMOUS_ANAGRAMS) {
+        const origClean = item.original.toLowerCase().replace(/[^a-z]/g, '');
+        const anaClean = item.anagram.toLowerCase().replace(/[^a-z]/g, '');
+        if (origClean === clean && !seen.has(anaClean)) {
+          seen.add(anaClean);
+          results.push({ phrase: item.anagram, explanation: item.note });
+        } else if (anaClean === clean && !seen.has(origClean)) {
+          seen.add(origClean);
+          results.push({ phrase: item.original, explanation: item.note });
+        }
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
+
+      // 2. Build dictionary map for exact single & two-word phrase anagrams
+      const sourceCounts: Record<string, number> = {};
+      for (const ch of clean) {
+        sourceCounts[ch] = (sourceCounts[ch] || 0) + 1;
+      }
+
+      const bySorted = new Map<string, string[]>();
+      const validSubwords: string[] = [];
+
+      for (const rawWord of COMMON_DICTIONARY) {
+        const w = rawWord.toLowerCase().trim();
+        if (w.length < 2 || w.length > clean.length || !/^[a-z]+$/.test(w)) continue;
+        const rem = getRemainingSortedLetters(sourceCounts, w);
+        if (rem !== null) {
+          validSubwords.push(w);
+          const s = sortWordLetters(w);
+          const arr = bySorted.get(s) || [];
+          if (!arr.includes(w)) arr.push(w);
+          bySorted.set(s, arr);
+        }
+      }
+
+      // Exact single-word anagrams
+      const exactWords = bySorted.get(sortedTarget) || [];
+      for (const w of exactWords) {
+        if (!seen.has(w) && results.length < 6) {
+          seen.add(w);
+          results.push({
+            phrase: w,
+            explanation: `Exact ${clean.length}-letter anagram (${creativeTheme})`
+          });
+        }
+      }
+
+      // Exact two-word phrase anagrams
+      for (const w1 of validSubwords) {
+        if (results.length >= 6) break;
+        const leftover = getRemainingSortedLetters(sourceCounts, w1);
+        if (!leftover || leftover.length < 2) continue;
+        const partners = bySorted.get(leftover) || [];
+        for (const w2 of partners) {
+          const pairKey = [w1, w2].sort().join('|');
+          if (!seen.has(pairKey)) {
+            seen.add(pairKey);
+            results.push({
+              phrase: `${w1} ${w2}`,
+              explanation: `Two-word rearrangement using all ${clean.length} letters (${creativeTheme})`
+            });
+            break;
+          }
+        }
+      }
+
+      if (results.length > 0) {
+        setAiAnagrams(results.slice(0, 6));
+      } else {
+        setAiAnagrams([
+          {
+            phrase: shuffleWord(clean),
+            explanation: `No exact dictionary phrase found for "${creativeInput}" — try a preset or shorter phrase.`
+          }
+        ]);
+      }
       setIsAiGenerating(false);
-    }
+    }, 200);
   };
-  // AI Hint generation for Quiz mode
-  const getAiGameHint = async () => {
+
+  // Smart Clue Generator for Quiz mode
+  const getAiGameHint = () => {
     if (gameHint || isGeneratingHint) return;
     setIsGeneratingHint(true);
-    try {
-      const prompt = `Give a cryptic 1-sentence crossword-style definition or riddle clue for the English word "${targetSecretWord}". Do NOT reveal or say the word "${targetSecretWord}" anywhere in your answer.`;
-      const res = await Flow.generate.text(prompt, { thinkingLevel: 'low' });
-      setGameHint(res.text.trim());
-    } catch (e) {
-      setGameHint(`Hint: It has ${targetSecretWord.length} letters and starts with "${targetSecretWord[0].toUpperCase()}".`);
-    } finally {
-      setIsGeneratingHint(false);
-    }
+    const vowels = targetSecretWord.match(/[aeiou]/gi)?.length || 0;
+    const first = targetSecretWord[0].toUpperCase();
+    const last = targetSecretWord[targetSecretWord.length - 1].toUpperCase();
+    setGameHint(
+      `Starts with "${first}", ends with "${last}", has ${targetSecretWord.length} letters and ${vowels} vowel${vowels === 1 ? '' : 's'}.`
+    );
+    setIsGeneratingHint(false);
   };
+
   // Handle Challenge submit
   const handleCheckGuess = () => {
     if (!userGuess.trim()) return;
@@ -159,7 +230,6 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
       setGameScore(s => s + 10 + targetSecretWord.length * 2);
       setGameStreak(s => s + 1);
     } else {
-      // Check if it's a valid anagram of the target letters
       if (sortWordLetters(cleanGuess) === sortWordLetters(targetSecretWord) && COMMON_DICTIONARY.includes(cleanGuess)) {
         setGameStatus('correct');
         setGameScore(s => s + 8 + targetSecretWord.length * 2);
@@ -170,30 +240,26 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
       }
     }
   };
-  // Export current anagram list to plain text or JSON
-  const handleExportList = async () => {
-    try {
-      const textContent = `Anagram Studio Export for "${solverInput}"\n` +
-        `Generated: ${new Date().toLocaleString()}\n` +
-        `Total Anagrams Found: ${solverResults.length}\n\n` +
-        solverResults.map(r => `${r.word.toUpperCase()} (${r.length} letters, ${r.score} pts)`).join('\n');
-      
-      const encoder = new TextEncoder();
-      const bytes = encoder.encode(textContent);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64 = btoa(binary);
-      await Flow.download({
-        base64,
-        mimeType: 'text/plain',
-        filename: `anagrams_${solverInput.toLowerCase().replace(/[^a-z]/g, '') || 'words'}.txt`
-      });
-    } catch (err) {
-      console.error(err);
-    }
+
+  // Export current anagram list to plain text file
+  const handleExportList = () => {
+    const textContent =
+      `Anagram Studio Export for "${solverInput}"\n` +
+      `Generated: ${new Date().toLocaleString()}\n` +
+      `Total Anagrams Found: ${solverResults.length}\n\n` +
+      solverResults.map(r => `${r.word.toUpperCase()} (${r.length} letters, ${r.score} pts)`).join('\n');
+
+    const blob = new Blob([textContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `anagrams_${solverInput.toLowerCase().replace(/[^a-z]/g, '') || 'words'}.txt`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
   // Tile visualizer shuffle
   const shuffleTiles = () => {
     setTileLetters(prev => {
@@ -205,6 +271,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
       return copy;
     });
   };
+
   // Swap tile positions for drag and drop visualizer
   const handleTileDragOver = (e: React.DragEvent, targetIdx: number) => {
     e.preventDefault();
@@ -215,6 +282,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
     setTileLetters(newTiles);
     setDraggedTileIdx(targetIdx);
   };
+
   return (
     <div className="flex flex-col h-full w-full bg-[#0d0f17] text-slate-100 font-['Plus_Jakarta_Sans',sans-serif] selection:bg-amber-500/30 overflow-hidden">
       {/* Top Navigation & Brand Strip */}
@@ -232,6 +300,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
             </div>
           </div>
         </div>
+
         {/* Mode Tabs */}
         <div className="flex items-center gap-1 bg-[#0d0f17] p-1 rounded-xl border border-slate-800">
           <button
@@ -279,6 +348,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
             <span>Tiles</span>
           </button>
         </div>
+
         {/* Right Aux CTA */}
         <div className="flex items-center gap-2">
           <button
@@ -291,6 +361,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
           </button>
         </div>
       </header>
+
       {/* Main Workspace Body */}
       <main className="flex-1 min-h-0 overflow-y-auto">
         {/* MODE 1: SOLVER */}
@@ -351,6 +422,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   </button>
                 </div>
               </div>
+
               {/* Filters & Options */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 text-xs text-slate-400">
                 <div className="flex items-center gap-4 flex-wrap">
@@ -401,6 +473,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 </div>
               </div>
             </div>
+
             {/* Letter frequency badges for source */}
             {solverInput && (
               <div className="flex items-center gap-2 flex-wrap">
@@ -418,6 +491,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 ))}
               </div>
             )}
+
             {/* Results Grid by Word Length */}
             {solverResults.length === 0 ? (
               <div className="p-12 text-center rounded-2xl bg-[#141724]/60 border border-dashed border-slate-800 space-y-3">
@@ -476,6 +550,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
             )}
           </div>
         )}
+
         {/* MODE 2: CREATIVE PHRASE LAB */}
         {activeMode === 'generator' && (
           <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
@@ -488,7 +563,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 </h2>
               </div>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Transform any name, title, or phrase into funny, poetic, or ironic full-phrase anagrams using Google Flow AI.
+                Transform any name, title, or phrase into clever exact-letter phrase anagrams from our built-in lexicon.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                 <div className="md:col-span-6 space-y-1.5">
@@ -497,7 +572,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                     type="text"
                     value={creativeInput}
                     onChange={(e) => setCreativeInput(e.target.value)}
-                    placeholder="e.g. dormitory, astronomy, clint eastwood, the countryside"
+                    placeholder="e.g. dormitory, astronomer, the eyes, conversation"
                     className="w-full px-3.5 py-2.5 bg-[#0d0f17] border border-slate-700 rounded-xl text-white font-medium text-sm focus:outline-none focus:border-amber-500"
                   />
                 </div>
@@ -535,16 +610,17 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   </button>
                 </div>
               </div>
+
               {/* Quick Presets */}
               <div className="flex items-center gap-1.5 flex-wrap text-xs pt-1">
                 <span className="text-slate-500">Inspiring presets:</span>
                 {[
-                  "the eyes",
-                  "the morse code",
-                  "astronomer",
-                  "conversation",
-                  "slot machines",
-                  "election results"
+                  'the eyes',
+                  'the morse code',
+                  'astronomer',
+                  'conversation',
+                  'slot machines',
+                  'election results'
                 ].map(preset => (
                   <button
                     key={preset}
@@ -558,7 +634,8 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 ))}
               </div>
             </div>
-            {/* Generated AI Results */}
+
+            {/* Generated Results */}
             <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
                 Generated Phrase Anagrams
@@ -595,6 +672,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 ))}
               </div>
             </div>
+
             {/* Legendary Classic Anagrams Showcase */}
             <div className="p-5 rounded-2xl bg-[#141724]/80 border border-slate-800 space-y-4">
               <div className="flex items-center gap-2">
@@ -618,6 +696,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
             </div>
           </div>
         )}
+
         {/* MODE 3: ANAGRAM CHALLENGE & QUIZ */}
         {activeMode === 'challenge' && (
           <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
@@ -646,6 +725,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 </button>
               </div>
             </div>
+
             {/* Scrambled Word Board */}
             <div className="p-8 rounded-3xl bg-gradient-to-b from-[#141724] to-[#0f111a] border border-slate-800 text-center space-y-6 shadow-2xl">
               <div>
@@ -656,6 +736,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   Rearrange the tiles into a legitimate English word or click tiles to populate your guess.
                 </p>
               </div>
+
               {/* Tiles Display */}
               <div className="flex items-center justify-center gap-2.5 flex-wrap">
                 {scrambledLetters.map((char, idx) => (
@@ -668,6 +749,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   </button>
                 ))}
               </div>
+
               {/* Input Guess Box */}
               <div className="max-w-md mx-auto space-y-3">
                 <div className="flex gap-2">
@@ -702,6 +784,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   </button>
                 </div>
               </div>
+
               {/* Status Outcome */}
               {gameStatus === 'correct' && (
                 <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-center gap-2 font-bold animate-bounce">
@@ -719,7 +802,8 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   The word was: <span className="font-bold text-white uppercase text-base ml-1">{targetSecretWord}</span>
                 </div>
               )}
-              {/* AI Hint Section */}
+
+              {/* Clue Section */}
               <div className="pt-4 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-center gap-3">
                 <button
                   onClick={getAiGameHint}
@@ -727,7 +811,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700"
                 >
                   <Lightbulb size={14} className="text-amber-400" />
-                  <span>{isGeneratingHint ? 'Generating clue...' : gameHint ? 'Clue Revealed' : 'Get AI Riddle Clue'}</span>
+                  <span>{isGeneratingHint ? 'Generating clue...' : gameHint ? 'Clue Revealed' : 'Get Word Clue'}</span>
                 </button>
                 <button
                   onClick={() => setGameStatus('revealed')}
@@ -738,12 +822,13 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
               </div>
               {gameHint && (
                 <p className="text-xs text-amber-200/90 italic bg-amber-500/10 p-3 rounded-xl border border-amber-500/20 max-w-lg mx-auto">
-                  💡 Riddle Clue: {gameHint}
+                  💡 Clue: {gameHint}
                 </p>
               )}
             </div>
           </div>
         )}
+
         {/* MODE 4: INTERACTIVE TILE SCRAMBLER & VISUALIZER */}
         {activeMode === 'visualizer' && (
           <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
@@ -776,6 +861,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 />
               </div>
             </div>
+
             {/* Magnetic Board */}
             <div className="p-8 rounded-3xl bg-[#101320] border-2 border-slate-800 min-h-[220px] flex items-center justify-center flex-wrap gap-2.5 shadow-inner">
               {tileLetters.map((tile, idx) => (
@@ -800,6 +886,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                 </div>
               ))}
             </div>
+
             {/* Letter Count & Analysis */}
             <div className="p-4 rounded-xl bg-[#141724] border border-slate-800 flex items-center justify-between text-xs text-slate-400">
               <div className="flex items-center gap-2">
@@ -819,6 +906,7 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
           </div>
         )}
       </main>
+
       {/* Guide / About Modal */}
       {showInfoModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -846,10 +934,10 @@ Do not write Markdown headers or numbered lists, just output the 5 lines.`;
                   <span className="font-bold text-amber-400">🔍 Anagram Solver:</span> Instant offline search through an extensive English vocabulary dictionary with letter scoring, subword filters, and plain-text export.
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0d0f17] border border-slate-800">
-                  <span className="font-bold text-amber-400">✨ Phrase Lab:</span> AI-driven generator that crafts witty, poetic, and meaningful full-phrase anagrams from names and sentences.
+                  <span className="font-bold text-amber-400">✨ Phrase Lab:</span> Multi-word anagram generator that crafts exact-letter phrase combinations from your built-in dictionary.
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0d0f17] border border-slate-800">
-                  <span className="font-bold text-amber-400">🏆 Challenge Mode:</span> Interactive word scramble game with streak scoring and AI crossword riddle hints.
+                  <span className="font-bold text-amber-400">🏆 Challenge Mode:</span> Interactive word scramble game with streak scoring and smart word clues.
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0d0f17] border border-slate-800">
                   <span className="font-bold text-amber-400">🔤 Tile Board:</span> Drag-and-drop magnetic letters to brainstorm and explore rearrangements by hand.
